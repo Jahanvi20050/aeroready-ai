@@ -2,6 +2,7 @@
 AeroReady AI - Preprocessing and Feature Engineering Module
 Handles RUL target generation, engine-wise validation splitting,
 and consistent feature extraction for training and inference.
+Supports both 'unit' and 'engine_id' column notations.
 """
 from typing import List, Tuple, Optional
 import numpy as np
@@ -14,20 +15,30 @@ except (ImportError, ValueError):
     from data_loader import SENSOR_COLUMNS, SETTING_COLUMNS
 
 
+def _get_unit_col(df: pd.DataFrame) -> str:
+    """Helper to detect unit/engine identifier column."""
+    if "unit" in df.columns:
+        return "unit"
+    elif "engine_id" in df.columns:
+        return "engine_id"
+    return "unit"
+
+
 def compute_train_rul(df: pd.DataFrame, max_rul_clip: Optional[float] = None) -> pd.DataFrame:
     """
     Computes the Remaining Useful Life (RUL) for training engines.
     Formula: RUL = maximum cycle for that engine - current cycle.
 
-    If max_rul_clip is provided (e.g. 125 or 130), values above the clip threshold
-    are capped (standard practice in prognostics to reflect healthy plateau phase).
+    If max_rul_clip is provided (e.g. 125), values above the clip threshold
+    are capped for training labels only (standard practice in prognostics to reflect healthy plateau phase).
     """
     df = df.copy()
-    max_cycles = df.groupby("engine_id")["cycle"].transform("max")
+    unit_col = _get_unit_col(df)
+    max_cycles = df.groupby(unit_col)["cycle"].transform("max")
     df["RUL"] = max_cycles - df["cycle"]
 
     if max_rul_clip is not None:
-        df["RUL"] = df["RUL"].clip(upper=max_rul_clip)
+        df["RUL"] = df["RUL"].clip(upper=float(max_rul_clip))
 
     return df
 
@@ -38,12 +49,13 @@ def split_train_val_by_engine(
     random_state: int = 42
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[int], List[int]]:
     """
-    Splits data by engine ID to prevent data leakage across flight cycles.
+    Splits data by engine ID/unit to prevent data leakage across flight cycles.
     
     Returns:
         train_df, val_df, train_engine_ids, val_engine_ids
     """
-    unique_engines = np.sort(df["engine_id"].unique())
+    unit_col = _get_unit_col(df)
+    unique_engines = np.sort(df[unit_col].unique())
     rng = np.random.RandomState(random_state)
     shuffled_engines = rng.permutation(unique_engines)
     
@@ -51,8 +63,8 @@ def split_train_val_by_engine(
     val_engine_ids = sorted(shuffled_engines[:val_size].tolist())
     train_engine_ids = sorted(shuffled_engines[val_size:].tolist())
 
-    train_df = df[df["engine_id"].isin(train_engine_ids)].copy()
-    val_df = df[df["engine_id"].isin(val_engine_ids)].copy()
+    train_df = df[df[unit_col].isin(train_engine_ids)].copy()
+    val_df = df[df[unit_col].isin(val_engine_ids)].copy()
 
     return train_df, val_df, train_engine_ids, val_engine_ids
 
@@ -107,6 +119,7 @@ class CMapssPreprocessor(BaseEstimator, TransformerMixin):
             raise RuntimeError("Preprocessor has not been fitted yet.")
 
         df = X.copy()
+        unit_col = _get_unit_col(df)
         features = pd.DataFrame(index=df.index)
         features["cycle"] = df["cycle"]
 
@@ -116,9 +129,9 @@ class CMapssPreprocessor(BaseEstimator, TransformerMixin):
         for col in self.active_sensors_:
             features[col] = df[col] if col in df.columns else 0.0
 
-        # Compute rolling statistics grouped by engine_id if multiple cycles exist
-        if self.rolling_window > 1 and "engine_id" in df.columns and len(df) > 1:
-            grouped = df.groupby("engine_id")
+        # Compute rolling statistics grouped by unit if multiple cycles exist
+        if self.rolling_window > 1 and unit_col in df.columns and len(df) > 1:
+            grouped = df.groupby(unit_col)
             for col in self.active_sensors_:
                 roll = grouped[col].rolling(window=self.rolling_window, min_periods=1)
                 roll_mean = roll.mean().reset_index(level=0, drop=True)
@@ -144,5 +157,6 @@ def extract_test_last_cycles(test_df: pd.DataFrame) -> pd.DataFrame:
     According to the NASA C-MAPSS competition, the ground truth RUL vector
     corresponds to the remaining life after this exact last observation.
     """
-    last_indices = test_df.groupby("engine_id")["cycle"].idxmax()
-    return test_df.loc[last_indices].sort_values("engine_id").reset_index(drop=True)
+    unit_col = _get_unit_col(test_df)
+    last_indices = test_df.groupby(unit_col)["cycle"].idxmax()
+    return test_df.loc[last_indices].sort_values(unit_col).reset_index(drop=True)

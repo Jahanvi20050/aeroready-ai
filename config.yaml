@@ -1,0 +1,22 @@
+# AeroReady AI Configuration File
+dataset:
+  subset: "FD001"
+  data_dir: "data/raw"
+
+preprocessing:
+  rolling_window: 5
+  variance_threshold: 1e-5
+
+model:
+  type: "RandomForestRegressor"
+  n_estimators: 100
+  max_depth: 15
+  min_samples_split: 5
+  min_samples_leaf: 2
+  random_state: 42
+  n_jobs: -1
+
+training:
+  val_ratio: 0.2
+  random_state: 42
+  rul_cap: 125   # Piecewise RUL cap applied to training labels only
