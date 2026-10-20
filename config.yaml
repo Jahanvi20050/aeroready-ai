@@ -1,11 +1,17 @@
 # AeroReady AI Configuration File
 dataset:
-  subset: "FD001"
+  default_subset: "FD003"
   data_dir: "data/raw"
 
 preprocessing:
   rolling_window: 5
+  window_length: 30
   variance_threshold: 1e-5
+  regime_clusters:
+    FD001: 1
+    FD002: 6
+    FD003: 1
+    FD004: 6
 
 model:
   type: "RandomForestRegressor"
@@ -20,3 +26,4 @@ training:
   val_ratio: 0.2
   random_state: 42
   rul_cap: 125   # Piecewise RUL cap applied to training labels only
+  seeds: [42, 123, 999]

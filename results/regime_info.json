@@ -1,0 +1,72 @@
+{
+  "FD001": {
+    "subset": "FD001",
+    "window_length": 30,
+    "variance_threshold": 1e-05,
+    "rul_cap": 125.0,
+    "active_sensors": [
+      "sensor_2",
+      "sensor_3",
+      "sensor_4",
+      "sensor_6",
+      "sensor_7",
+      "sensor_8",
+      "sensor_9",
+      "sensor_11",
+      "sensor_12",
+      "sensor_13",
+      "sensor_14",
+      "sensor_15",
+      "sensor_17",
+      "sensor_20",
+      "sensor_21"
+    ],
+    "n_regimes": 1,
+    "cluster_sizes": {
+      "0": 20631
+    },
+    "dropped_sensors": [
+      "sensor_1",
+      "sensor_5",
+      "sensor_10",
+      "sensor_16",
+      "sensor_18",
+      "sensor_19"
+    ]
+  },
+  "FD003": {
+    "subset": "FD003",
+    "window_length": 30,
+    "variance_threshold": 1e-05,
+    "rul_cap": 125.0,
+    "active_sensors": [
+      "sensor_2",
+      "sensor_3",
+      "sensor_4",
+      "sensor_6",
+      "sensor_7",
+      "sensor_8",
+      "sensor_9",
+      "sensor_10",
+      "sensor_11",
+      "sensor_12",
+      "sensor_13",
+      "sensor_14",
+      "sensor_15",
+      "sensor_17",
+      "sensor_20",
+      "sensor_21"
+    ],
+    "n_regimes": 1,
+    "cluster_sizes": {
+      "0": 24720
+    },
+    "dropped_sensors": [
+      "sensor_1",
+      "sensor_5",
+      "sensor_16",
+      "sensor_18",
+      "sensor_19"
+    ]
+  }
+}

@@ -2,11 +2,13 @@
 AeroReady AI - Inference Module
 Loads trained model artifacts to predict Remaining Useful Life (RUL) and assign health/risk categories.
 """
+import json
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, List, Optional, Tuple
 import joblib
 import numpy as np
 import pandas as pd
+import yaml
 
 # Add project root and src to sys.path
 import sys
@@ -17,29 +19,52 @@ for p in [str(_project_root), str(_current_dir)]:
         sys.path.insert(0, p)
 
 try:
-    from src.preprocessing import CMapssPreprocessor, extract_test_last_cycles
-    from src.data_loader import load_raw_data, get_default_data_dir
+    from src.preprocessing import compute_tree_window_features, extract_windowed_sequences
 except ImportError:
-    from preprocessing import CMapssPreprocessor, extract_test_last_cycles
-    from data_loader import load_raw_data, get_default_data_dir
+    from preprocessing import compute_tree_window_features, extract_windowed_sequences
 
 
-def get_default_model_paths() -> Tuple[Path, Path]:
-    """Resolves standard model artifact paths."""
-    candidates = [
-        _project_root / "models",
-        Path.cwd() / "aeroready-ai" / "models",
-        Path.cwd() / "models",
-    ]
-    for d in candidates:
-        model_file = d / "rul_rf_model.joblib"
-        prep_file = d / "preprocessor.joblib"
-        if model_file.is_file() and prep_file.is_file():
-            return model_file, prep_file
+def _load_config() -> Dict[str, Any]:
+    with (_project_root / "config.yaml").open("r", encoding="utf-8") as config_file:
+        return yaml.safe_load(config_file)
 
-    # Fallback to project root / models
-    default_dir = _project_root / "models"
-    return default_dir / "rul_rf_model.joblib", default_dir / "preprocessor.joblib"
+
+def get_default_subset() -> str:
+    """Return the dashboard default subset configured for this project."""
+    config = _load_config()
+    subset = config.get("dataset", {}).get("default_subset")
+    if not subset:
+        raise ValueError("Set dataset.default_subset in config.yaml.")
+    return str(subset)
+
+
+def get_available_subsets() -> List[str]:
+    """Return subsets with model, preprocessor, metrics, and comparison artifacts."""
+    models_dir = _project_root / "models"
+    results_dir = _project_root / "results"
+    benchmark_file = results_dir / "benchmark_all.csv"
+    if not benchmark_file.is_file():
+        return []
+    available = []
+    if not models_dir.is_dir():
+        return available
+    for model_dir in sorted(path for path in models_dir.iterdir() if path.is_dir()):
+        subset = model_dir.name
+        required_files = (
+            model_dir / "randomforest_model.joblib",
+            model_dir / "regime_normalizer.joblib",
+            model_dir / "metrics.json",
+            benchmark_file,
+        )
+        if all(path.is_file() for path in required_files):
+            available.append(subset)
+    return available
+
+
+def get_default_model_paths(subset: str) -> Tuple[Path, Path]:
+    """Resolve the selected subset's model and fitted preprocessor."""
+    model_dir = _project_root / "models" / subset
+    return model_dir / "randomforest_model.joblib", model_dir / "regime_normalizer.joblib"
 
 
 def categorize_rul(rul: float) -> Tuple[str, str, str]:
@@ -74,9 +99,15 @@ class RULPredictor:
     Inference class for Remaining Useful Life predictions.
     """
 
-    def __init__(self, model_path: Optional[Path] = None, prep_path: Optional[Path] = None):
+    def __init__(
+        self,
+        subset: Optional[str] = None,
+        model_path: Optional[Path] = None,
+        prep_path: Optional[Path] = None,
+    ):
+        self.subset = subset or get_default_subset()
         if model_path is None or prep_path is None:
-            default_model, default_prep = get_default_model_paths()
+            default_model, default_prep = get_default_model_paths(self.subset)
             self.model_path = Path(model_path) if model_path else default_model
             self.prep_path = Path(prep_path) if prep_path else default_prep
         else:
@@ -89,30 +120,37 @@ class RULPredictor:
         self._load_artifacts()
 
     def _load_artifacts(self) -> bool:
-        """Attempts to load saved model and preprocessor."""
-        if self.model_path.is_file() and self.prep_path.is_file():
-            try:
-                self.model = joblib.load(self.model_path)
-                self.preprocessor = joblib.load(self.prep_path)
-                self.is_loaded = True
-                return True
-            except Exception as e:
-                print(f"[WARN] Error loading model artifacts: {e}")
-                self.is_loaded = False
-                return False
-        else:
+        """Load the selected subset model, preprocessor, and feature metadata."""
+        if not self.model_path.is_file() or not self.prep_path.is_file():
             self.is_loaded = False
             return False
+        self.model = joblib.load(self.model_path)
+        self.preprocessor = joblib.load(self.prep_path)
+        with (self.model_path.parent / "metrics.json").open("r", encoding="utf-8") as metrics_file:
+            parameters = json.load(metrics_file)["parameters"]
+        self.active_sensors = parameters["active_sensors"]
+        self.window_length = int(parameters["window_length"])
+        self.is_loaded = True
+        return True
 
     def predict_dataframe(self, df: pd.DataFrame) -> np.ndarray:
         """
-        Transforms input dataframe using preprocessor and predicts RUL.
+        Predicts from per-engine telemetry histories using trained window features.
         """
         if not self.is_loaded:
             raise RuntimeError(
-                "Model artifacts not found. Please run 'python src/train_model.py' to train the model first."
+                f"Model artifacts for {self.subset} were not found. "
+                "Run 'python src/train_model.py' to train the model first."
             )
-        X = self.preprocessor.transform(df)
+        normalized = self.preprocessor.transform(df)
+        windows, _, _ = extract_windowed_sequences(
+            normalized,
+            feature_cols=self.active_sensors,
+            window_length=self.window_length,
+            is_test_last=True,
+            target_col=None,
+        )
+        X = compute_tree_window_features(windows, feature_names=self.active_sensors)
         preds = self.model.predict(X)
         return np.maximum(0.0, preds)  # RUL cannot be negative
 

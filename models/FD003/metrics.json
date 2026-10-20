@@ -1,0 +1,42 @@
+{
+  "status": "success",
+  "dataset_subset": "FD003",
+  "model_type": "RandomForestRegressor",
+  "parameters": {
+    "n_estimators": 100,
+    "max_depth": 15,
+    "min_samples_split": 5,
+    "min_samples_leaf": 2,
+    "random_state": 42,
+    "window_length": 30,
+    "rul_cap": 125.0,
+    "active_sensors": [
+      "sensor_2",
+      "sensor_3",
+      "sensor_4",
+      "sensor_6",
+      "sensor_7",
+      "sensor_8",
+      "sensor_9",
+      "sensor_10",
+      "sensor_11",
+      "sensor_12",
+      "sensor_13",
+      "sensor_14",
+      "sensor_15",
+      "sensor_17",
+      "sensor_20",
+      "sensor_21"
+    ]
+  },
+  "test_metrics": {
+    "rmse": 14.1944,
+    "mae": 10.3723,
+    "nasa_score": 293.2122
+  },
+  "artifacts": {
+    "model": "randomforest_model.joblib",
+    "preprocessor": "regime_normalizer.joblib",
+    "test_predictions": "test_predictions.csv"
+  }
+}

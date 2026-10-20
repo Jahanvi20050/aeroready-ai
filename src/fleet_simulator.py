@@ -1,9 +1,4 @@
-"""
-AeroReady AI - Synthetic Fleet Simulation Module
-Generates a representative fleet of 10 fictional aircraft for maintenance scheduling.
-Integrates trained ML model predictions on NASA test engines when available,
-or provides a clearly labelled illustrative synthetic fallback.
-"""
+"""Simulate a fictional fleet using predictions on NASA test-engine telemetry."""
 from typing import List, Dict, Any, Optional
 import pandas as pd
 import numpy as np
@@ -17,11 +12,11 @@ for p in [str(_project_root), str(_current_dir)]:
         sys.path.insert(0, p)
 
 try:
-    from src.predict_rul import RULPredictor, categorize_rul
+    from src.predict_rul import RULPredictor, categorize_rul, get_default_subset
     from src.data_loader import load_raw_data, get_default_data_dir
     from src.preprocessing import extract_test_last_cycles
 except ImportError:
-    from predict_rul import RULPredictor, categorize_rul
+    from predict_rul import RULPredictor, categorize_rul, get_default_subset
     from data_loader import load_raw_data, get_default_data_dir
     from preprocessing import extract_test_last_cycles
 
@@ -31,154 +26,139 @@ FLEET_PROFILES = [
         "aircraft_id": "AERO-101",
         "tail_number": "N101AR",
         "model_type": "F-22B Raptor Sim",
-        "test_engine_id": 31,  # Critical engine in FD001 test set
         "mission_priority": "Tier 1 - Quick Reaction",
         "priority_rank": 1,
         "default_duration_days": 3,
         "spare_part_name": "HPC Stage-3 Rotor Blisk",
         "spare_parts_available": True,
         "spare_part_lead_days": 0,
-        "synthetic_rul": 15.0,
     },
     {
         "aircraft_id": "AERO-102",
         "tail_number": "N102AR",
         "model_type": "F-22B Raptor Sim",
-        "test_engine_id": 34,  # Critical/Warning in FD001 test set
         "mission_priority": "Tier 1 - Quick Reaction",
         "priority_rank": 1,
         "default_duration_days": 4,
         "spare_part_name": "Turbine Shroud Seal Kit",
         "spare_parts_available": False,
         "spare_part_lead_days": 2,
-        "synthetic_rul": 22.0,
     },
     {
         "aircraft_id": "AERO-103",
         "tail_number": "N103AR",
         "model_type": "C-130J Hercules Sim",
-        "test_engine_id": 3,  # Warning engine
         "mission_priority": "Tier 2 - Tactical Transport",
         "priority_rank": 2,
         "default_duration_days": 3,
         "spare_part_name": "Fuel Metering Valve Assy",
         "spare_parts_available": True,
         "spare_part_lead_days": 0,
-        "synthetic_rul": 38.0,
     },
     {
         "aircraft_id": "AERO-104",
         "tail_number": "N104AR",
         "model_type": "C-130J Hercules Sim",
-        "test_engine_id": 16,  # Warning engine
         "mission_priority": "Tier 2 - Tactical Transport",
         "priority_rank": 2,
         "default_duration_days": 2,
         "spare_part_name": "LPC Stator Vane Bushing",
         "spare_parts_available": True,
         "spare_part_lead_days": 0,
-        "synthetic_rul": 44.0,
     },
     {
         "aircraft_id": "AERO-105",
         "tail_number": "N105AR",
         "model_type": "P-8A Poseidon Sim",
-        "test_engine_id": 11,  # Warning engine
         "mission_priority": "Tier 2 - Maritime Recon",
         "priority_rank": 2,
         "default_duration_days": 3,
         "spare_part_name": "Bleed Enthalpy Sensor Pack",
         "spare_parts_available": False,
         "spare_part_lead_days": 3,
-        "synthetic_rul": 52.0,
     },
     {
         "aircraft_id": "AERO-106",
         "tail_number": "N106AR",
         "model_type": "P-8A Poseidon Sim",
-        "test_engine_id": 4,  # Moderate/Healthy engine
         "mission_priority": "Tier 3 - Routine Patrol",
         "priority_rank": 3,
         "default_duration_days": 2,
         "spare_part_name": "Exhaust Gas Thermocouple",
         "spare_parts_available": True,
         "spare_part_lead_days": 0,
-        "synthetic_rul": 68.0,
     },
     {
         "aircraft_id": "AERO-107",
         "tail_number": "N107AR",
         "model_type": "T-38 Talon Sim",
-        "test_engine_id": 24,  # Healthy engine
         "mission_priority": "Tier 3 - Advanced Training",
         "priority_rank": 3,
         "default_duration_days": 2,
         "spare_part_name": "Oil Scavenge Pump Filter",
         "spare_parts_available": True,
         "spare_part_lead_days": 0,
-        "synthetic_rul": 88.0,
     },
     {
         "aircraft_id": "AERO-108",
         "tail_number": "N108AR",
         "model_type": "T-38 Talon Sim",
-        "test_engine_id": 25,  # Healthy engine
         "mission_priority": "Tier 3 - Advanced Training",
         "priority_rank": 3,
         "default_duration_days": 2,
         "spare_part_name": "Ignition Exciter Lead",
         "spare_parts_available": True,
         "spare_part_lead_days": 0,
-        "synthetic_rul": 105.0,
     },
     {
         "aircraft_id": "AERO-109",
         "tail_number": "N109AR",
         "model_type": "KC-46A Pegasus Sim",
-        "test_engine_id": 38,  # Healthy engine
         "mission_priority": "Tier 1 - Strategic Tanker",
         "priority_rank": 1,
         "default_duration_days": 3,
         "spare_part_name": "Fan Blade Containment Seal",
         "spare_parts_available": True,
         "spare_part_lead_days": 0,
-        "synthetic_rul": 118.0,
     },
     {
         "aircraft_id": "AERO-110",
         "tail_number": "N110AR",
         "model_type": "KC-46A Pegasus Sim",
-        "test_engine_id": 5,  # Healthy engine
         "mission_priority": "Tier 1 - Strategic Tanker",
         "priority_rank": 1,
         "default_duration_days": 2,
         "spare_part_name": "Starter Generator Brushes",
         "spare_parts_available": True,
         "spare_part_lead_days": 0,
-        "synthetic_rul": 132.0,
     },
 ]
 
 
 class FleetSimulator:
     """
-    Simulates a 10-aircraft fictional fleet with engine health metrics,
-    maintenance states, and mission readiness parameters.
+    Simulates a fictional fleet using selected-subset test-engine telemetry.
     """
 
-    def __init__(self, predictor: Optional[RULPredictor] = None, data_dir: Optional[Path] = None):
-        self.predictor = predictor or RULPredictor()
+    def __init__(
+        self,
+        predictor: Optional[RULPredictor] = None,
+        subset: Optional[str] = None,
+        data_dir: Optional[Path] = None,
+    ):
+        self.subset = subset or getattr(predictor, "subset", None) or get_default_subset()
+        self.predictor = predictor or RULPredictor(subset=self.subset)
+        if self.predictor.subset != self.subset:
+            raise ValueError("Fleet subset must match the predictor's trained subset.")
         self.data_dir = data_dir or get_default_data_dir()
+        self.test_data_df = None
         self.test_snapshots_df = None
-        self._try_load_test_snapshots()
+        self._load_test_snapshots()
 
-    def _try_load_test_snapshots(self):
-        """Loads test engine snapshots if test_FD001.txt is available."""
-        try:
-            _, test_df, _ = load_raw_data(self.data_dir, subset="FD001")
-            self.test_snapshots_df = extract_test_last_cycles(test_df).set_index("engine_id")
-        except Exception:
-            self.test_snapshots_df = None
+    def _load_test_snapshots(self):
+        """Load test histories and their final observations for the selected subset."""
+        _, self.test_data_df, _ = load_raw_data(self.data_dir, subset=self.subset)
+        self.test_snapshots_df = extract_test_last_cycles(self.test_data_df).set_index("engine_id")
 
     def generate_fleet(
         self,
@@ -195,30 +175,22 @@ class FleetSimulator:
         Returns:
             List of 10 aircraft state dictionaries
         """
+        if not self.predictor.is_loaded:
+            raise RuntimeError(f"Model artifacts for {self.subset} are not loaded.")
+        if self.test_snapshots_df is None or self.test_snapshots_df.empty:
+            raise RuntimeError(f"No test-engine telemetry is available for {self.subset}.")
+
         fleet = []
-        model_ready = self.predictor.is_loaded and (self.test_snapshots_df is not None)
-
-        for profile in FLEET_PROFILES:
+        test_engine_ids = self.test_snapshots_df.index.tolist()
+        for profile_index, profile in enumerate(FLEET_PROFILES):
             aircraft_id = profile["aircraft_id"]
-            eng_id = profile["test_engine_id"]
-
-            predicted_rul = None
-            data_source = ""
-
-            # Check if we can derive RUL from trained model on NASA test engine
-            if model_ready and eng_id in self.test_snapshots_df.index:
-                try:
-                    eng_snapshot = self.test_snapshots_df.loc[[eng_id]].reset_index()
-                    pred = self.predictor.predict_dataframe(eng_snapshot)[0]
-                    predicted_rul = float(round(pred, 1))
-                    data_source = f"Model-Derived (NASA Engine #{eng_id})"
-                except Exception:
-                    predicted_rul = None
-
-            # Fallback to illustrative synthetic RUL
-            if predicted_rul is None:
-                predicted_rul = profile["synthetic_rul"]
-                data_source = "Illustrative Synthetic Demo"
+            eng_id = test_engine_ids[profile_index % len(test_engine_ids)]
+            eng_history = self.test_data_df[
+                self.test_data_df["engine_id"] == eng_id
+            ].sort_values("cycle")
+            pred = self.predictor.predict_dataframe(eng_history)[0]
+            predicted_rul = float(round(pred, 1))
+            data_source = f"Model-Derived ({self.subset} Engine #{eng_id})"
 
             category, badge_color, explanation = categorize_rul(predicted_rul)
 

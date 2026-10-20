@@ -8,7 +8,7 @@
 ## 📌 Executive Summary
 
 **AeroReady AI** addresses two interdependent challenges in aerospace operations:
-1. **Predictive Maintenance (ML Prognostics):** Predicting how many flight cycles remain before an engine reaches failure threshold using multivariate sensor telemetry from the **NASA C-MAPSS FD001** turbofan degradation dataset.
+1. **Predictive Maintenance (ML Prognostics):** Predicting how many flight cycles remain before an engine reaches failure threshold using multivariate sensor telemetry from the NASA C-MAPSS FD001-FD004 datasets.
 2. **Fleet Availability Optimization (Operations Scheduling):** Using predicted RUL, maintenance durations, limited hangar bay capacity, spare-part logistics lead times, and mission criticality tiers to generate an optimal maintenance schedule that maximizes mission-ready aircraft.
 
 > ⚠️ **Educational & Prototype Disclaimer:**  
@@ -27,16 +27,13 @@ aeroready-ai/
 │
 ├── data/
 │   ├── README.md               # Dataset documentation, column schema, and download sources
-│   ├── train_FD001.txt         # 100 run-to-failure engine trajectories (20,631 records)
-│   ├── test_FD001.txt          # 100 test trajectories ending prior to failure (13,096 records)
-│   ├── RUL_FD001.txt           # True remaining cycles for the 100 test engines
+│   ├── train_FD00*.txt         # Training trajectories for available subsets
+│   ├── test_FD00*.txt          # Held-out test trajectories
+│   ├── RUL_FD00*.txt           # Test-engine ground truth
 │   └── readme.txt              # Official NASA C-MAPSS dataset documentation
 │
-├── models/
-│   ├── rul_rf_model.joblib     # Trained RandomForestRegressor model
-│   ├── preprocessor.joblib     # Fitted CMapssPreprocessor (rolling features & zero-variance filter)
-│   ├── metrics.json            # Honest performance metrics (RMSE, MAE, R², NASA score)
-│   └── test_predictions.csv    # Per-engine test set predictions & residuals
+├── models/<SUBSET>/            # Subset-specific model, fitted preprocessor, metrics, predictions
+├── results/                    # Per-subset RandomForest/LightGBM comparison CSVs
 │
 ├── src/
 │   ├── __init__.py             # Module initialization
@@ -59,29 +56,23 @@ aeroready-ai/
 ## 🔬 Machine Learning Pipeline
 
 ### 1. Dataset & Ground-Truth RUL Formula
-- **Dataset:** NASA C-MAPSS (Commercial Modular Aero-Propulsion System Simulation) subset **FD001**.
-- **Conditions:** Sea Level, Single Fault Mode (High-Pressure Compressor Degradation).
+- **Dataset:** NASA C-MAPSS subsets FD001-FD004; the dashboard and training CLI share `dataset.default_subset` in `config.yaml`.
 - **Target Label Formulation:** For each training engine $i$ at operating flight cycle $t$:
   $$\text{RUL}_{i,t} = \max_{k}(\text{cycle}_{i,k}) - t$$
-- **Engine-Wise Partitioning:** Engines are split by engine unit ID (80 training engines, 20 validation engines). Individual flight cycles from the same engine are never randomly shuffled into both splits, preventing data leakage.
+- **Training labels:** RUL values are capped at 125 cycles using `training.rul_cap` in `config.yaml`.
+- **Engine-Wise Validation:** Five-fold GroupKFold keeps each engine wholly within one fold (three configured seeds); the official test set is evaluated only after model training.
 
 ### 2. Feature Engineering
-- **Active Channel Selection:** Drops constant channels (`sensor_1`, `sensor_5`, `sensor_10`, `sensor_16`, `sensor_18`, `sensor_19`) that have zero variance in FD001.
-- **Temporal Dynamics:** Computes 5-cycle rolling means and rolling standard deviations per engine, capturing the rate of thermomechanical degradation.
+- **Active Channel Selection:** Drops near-constant sensors based on the selected subset's training data.
+- **Temporal Dynamics:** Uses 30-cycle engine windows summarized with last value, mean, standard deviation, slope, and exponentially weighted mean features.
 
 ### 3. Model Architecture & Evaluated Performance
-- **Estimator:** Scikit-Learn `RandomForestRegressor` ($100$ estimators, `max_depth=15`, `min_samples_split=5`).
-- **Honest Test Results (Official NASA Test Set — 100 Test Engines):**
-  - **Test Root Mean Squared Error (RMSE):** **35.53 flight cycles**
-  - **Test Mean Absolute Error (MAE):** **25.62 flight cycles**
-  - **Validation Engine Set $R^2$:** **0.764**
-  - **NASA PHM 2008 Asymmetric Penalty Score:** **124,561**
-- **Top Driving Sensor Features:**
-  1. `sensor_2_roll_mean_5` (LPC Outlet Temperature)
-  2. `sensor_4_roll_mean_5` (LPT Outlet Temperature)
-  3. `sensor_15_roll_mean_5` (Bypass Ratio)
-  4. `sensor_11_roll_mean_5` (HPC Static Pressure)
-  5. `cycle` (Accumulated operating flight hours)
+- **Estimators:** RandomForest and LightGBM are compared with the same window features and engine-grouped validation.
+- **Reported Performance:** Test RMSE, MAE, and NASA score are stored in `results/benchmark_all.csv`; the dashboard and this table use those generated result values.
+
+| Subset | Model | Test RMSE | Test MAE | NASA score |
+|---|---|---:|---:|---:|
+<!-- Benchmark rows are refreshed from results/benchmark_all.csv after a full run. -->
 
 ---
 
@@ -128,26 +119,26 @@ pip install -r requirements.txt
 ```
 
 ### Step 4: Verify the NASA Dataset
-The dataset files are located in `aeroready-ai/data/`:
-- `train_FD001.txt`
-- `test_FD001.txt`
-- `RUL_FD001.txt`
+The dataset files for each subset are located in `aeroready-ai/data/raw/`:
+- `train_FD00*.txt`
+- `test_FD00*.txt`
+- `RUL_FD00*.txt`
 
 *(If missing, follow instructions in `data/README.md`)*
 
 ### Step 5: Train the ML Model
-Train the Random Forest model and save artifacts:
+Train and compare both supported models for a selected subset:
 ```powershell
-python src/train_model.py
+python src/train_model.py --subset FD003
 ```
-*Output will display engine split details, training time, validation metrics, and official NASA test set results.*
+*Artifacts are saved to `models/<SUBSET>/`; comparison metrics are saved under `results/`.*
 
 ### Step 6: Run Unit Tests
 Execute the automated test suite with pytest:
 ```powershell
 pytest -v
 ```
-*Expected: 6 passed tests validating RUL labels, zero data leakage, and scheduler capacity constraints.*
+*Tests cover preprocessing, engine-grouped windowing, scheduling, and prediction from every available subset artifact.*
 
 ### Step 7: Launch the Interactive Dashboard
 Launch the Streamlit web dashboard:

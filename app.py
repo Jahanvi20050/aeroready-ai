@@ -3,7 +3,6 @@ AeroReady AI — Predictive Maintenance & Fleet Availability Optimizer
 Streamlit Interactive Dashboard
 """
 import json
-import os
 import sys
 from pathlib import Path
 import pandas as pd
@@ -18,7 +17,12 @@ if str(_current_dir) not in sys.path:
     sys.path.insert(0, str(_current_dir))
 
 from src.data_loader import check_dataset_exists, get_default_data_dir, load_raw_data
-from src.predict_rul import RULPredictor, categorize_rul
+from src.predict_rul import (
+    RULPredictor,
+    categorize_rul,
+    get_available_subsets,
+    get_default_subset,
+)
 from src.fleet_simulator import FleetSimulator
 from src.scheduler import MaintenanceScheduler
 
@@ -188,54 +192,69 @@ def apply_dark_theme(fig, height=300):
 
 
 @st.cache_resource
-def get_cached_predictor():
-    return RULPredictor()
+def get_cached_predictor(subset: str):
+    return RULPredictor(subset=subset)
 
 
 @st.cache_data
-def load_model_metrics():
-    model_dir = _current_dir / "models"
+def load_model_metrics(subset: str):
+    model_dir = _current_dir / "models" / subset
     metrics_file = model_dir / "metrics.json"
     if metrics_file.is_file():
-        try:
-            with open(metrics_file, "r") as f:
-                return json.load(f)
-        except Exception:
-            return None
+        with metrics_file.open("r", encoding="utf-8") as metrics_file_handle:
+            return json.load(metrics_file_handle)
     return None
 
 
 @st.cache_data
-def load_test_predictions_table():
-    model_dir = _current_dir / "models"
+def load_model_comparison_table(subset: str):
+    comparison_file = _current_dir / "results" / "benchmark_all.csv"
+    if comparison_file.is_file():
+        comparison_df = pd.read_csv(comparison_file)
+        return comparison_df[comparison_df["subset"] == subset].copy()
+    return None
+
+
+@st.cache_data
+def load_test_predictions_table(subset: str):
+    model_dir = _current_dir / "models" / subset
     preds_file = model_dir / "test_predictions.csv"
     if preds_file.is_file():
-        try:
-            return pd.read_csv(preds_file)
-        except Exception:
-            return None
+        return pd.read_csv(preds_file)
     return None
 
 
 @st.cache_data
-def get_raw_dataset_samples():
-    try:
-        train_df, test_df, rul_df = load_raw_data()
-        return train_df, test_df, rul_df
-    except Exception:
-        return None, None, None
+def get_raw_dataset_samples(subset: str):
+    return load_raw_data(subset=subset)
 
 
 # Main Application Entry
 def main():
-    predictor = get_cached_predictor()
-    simulator = FleetSimulator(predictor=predictor)
-    metrics_data = load_model_metrics()
-
     # Sidebar Navigation & Global Controls
     with st.sidebar:
         st.markdown("### ✈️ AeroReady AI")
         st.caption("Predictive Maintenance & Fleet Availability Optimizer")
+
+        available_subsets = get_available_subsets()
+        if not available_subsets:
+            st.error("No trained subset artifacts and result files are available.")
+            st.stop()
+        default_subset = get_default_subset()
+        selected_subset = st.selectbox(
+            "C-MAPSS subset",
+            available_subsets,
+            index=available_subsets.index(default_subset)
+            if default_subset in available_subsets else 0,
+            key="dataset_subset",
+        )
+        predictor = get_cached_predictor(selected_subset)
+        if not predictor.is_loaded:
+            st.error(f"Model artifacts for {selected_subset} are missing.")
+            st.stop()
+        simulator = FleetSimulator(predictor=predictor, subset=selected_subset)
+        metrics_data = load_model_metrics(selected_subset)
+        comparison_df = load_model_comparison_table(selected_subset)
 
         nav_choice = st.radio(
             "Navigate Modules",
@@ -252,15 +271,17 @@ def main():
 
         st.markdown("---")
         st.markdown("#### System Status")
-        if predictor.is_loaded:
-            st.success("ML Engine: Online (FD001 Trained)")
-            if metrics_data:
-                st.caption(f"Test RMSE: **{metrics_data['test_metrics']['rmse']} cycles**")
+        if metrics_data and comparison_df is not None:
+            st.success(f"ML Engine: Online ({selected_subset} Trained)")
+            rf_result = comparison_df[comparison_df["model"] == "RandomForest"]
+            if not rf_result.empty:
+                test_rmse = float(rf_result.iloc[0]["test_rmse"])
+                st.caption(f"Test RMSE: **{test_rmse:.2f} cycles**")
         else:
-            st.warning("ML Engine: Untrained (Synthetic Fallback)")
-            st.caption("Run `python src/train_model.py` to train model on NASA FD001.")
+            st.warning(f"Metrics for {selected_subset} are not available.")
+            st.caption("Run `python src/train_model.py --subset <SUBSET>` to train a model.")
 
-        data_present, _ = check_dataset_exists()
+        data_present, _ = check_dataset_exists(subset=selected_subset)
         if data_present:
             st.info("NASA Dataset: Verified in `data/`")
         else:
@@ -296,7 +317,7 @@ def main():
     elif nav_choice == "What-if Simulator":
         render_what_if_simulator(simulator)
     elif nav_choice == "Model Evaluation":
-        render_model_evaluation(metrics_data)
+        render_model_evaluation(selected_subset)
 
 
 # -----------------------------------------------------------------------------
@@ -308,7 +329,7 @@ def render_fleet_overview(simulator: FleetSimulator, predictor: RULPredictor):
         """
         <div class="disclaimer-box">
             <strong>Demonstration Notice:</strong> The simulated fleet contains 10 fictional aircraft. 
-            When the ML model is trained, engine degradation data is sampled from the official NASA C-MAPSS FD001 test engines.
+            Engine degradation data is sampled from the selected NASA C-MAPSS test subset.
             This prototype is designed for engineering education and is not an operational flight safety system.
         </div>
         """,
@@ -521,8 +542,8 @@ def render_engine_health(simulator: FleetSimulator, predictor: RULPredictor):
     st.info(f"**Operational Assessment:** {selected_ac['explanation']}")
 
     # Plot Engine Sensor History from NASA Dataset if available
-    train_df, test_df, _ = get_raw_dataset_samples()
-    if test_df is not None and eng_id in test_df["engine_id"].values:
+    _, test_df, _ = get_raw_dataset_samples(simulator.subset)
+    if eng_id in test_df["engine_id"].values:
         eng_history = test_df[test_df["engine_id"] == eng_id].sort_values("cycle")
         st.markdown(f"#### Sensor Trajectory for Engine #{eng_id} ({len(eng_history)} Flight Cycles Recorded)")
 
@@ -969,150 +990,38 @@ def render_what_if_simulator(simulator: FleetSimulator):
 # -----------------------------------------------------------------------------
 # 6. MODEL EVALUATION
 # -----------------------------------------------------------------------------
-def render_model_evaluation(metrics_data: dict):
-    st.markdown("### 6. Machine Learning Model Performance & Diagnostics")
-    st.markdown(
-        """
-        <div class="disclaimer-box">
-            <strong>Honest Evaluation Policy:</strong> All performance figures shown are computed strictly from the 
-            RandomForestRegressor model trained on the NASA C-MAPSS FD001 dataset without synthetic extrapolation.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    if not metrics_data:
-        st.warning(
-            "⚠️ No trained model metrics found. Please train the baseline model first by running:\n\n"
-            "```powershell\npython src/train_model.py\n```"
-        )
+def render_model_evaluation(selected_subset: str):
+    st.markdown("### 6. Model Comparison")
+    comparison_df = load_model_comparison_table(selected_subset)
+    if comparison_df is None or comparison_df.empty:
+        st.info(f"No benchmark comparison is available for {selected_subset}.")
         return
 
-    test_m = metrics_data["test_metrics"]
-    val_m = metrics_data["validation_metrics"]
-    params = metrics_data.get("parameters", {})
-
-    # Top KPI Metrics Cards
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">NASA Test Set RMSE</div>
-                <div class="metric-value" style="color: #38BDF8;">{test_m['rmse']}</div>
-                <div class="metric-sub">Operating Cycles</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with c2:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">NASA Test Set MAE</div>
-                <div class="metric-value" style="color: #10B981;">{test_m['mae']}</div>
-                <div class="metric-sub">Average Absolute Error (Cycles)</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with c3:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">Validation Set R²</div>
-                <div class="metric-value" style="color: #F59E0B;">{val_m['r2']}</div>
-                <div class="metric-sub">Engine-wise Split (No Leakage)</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with c4:
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">NASA PHM Score</div>
-                <div class="metric-value" style="color: #F8FAFC; font-size: 1.4rem; padding-top: 5px;">
-                    {test_m['nasa_score']:,.0f}
-                </div>
-                <div class="metric-sub">Asymmetric Penalty Score</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Actual vs Predicted Plot & Residual Distribution
-    preds_df = load_test_predictions_table()
-    if preds_df is not None:
-        plot_col1, plot_col2 = st.columns(2)
-
-        with plot_col1:
-            st.markdown("#### Actual vs. Predicted RUL (100 NASA Test Engines)")
-            fig_scatter = px.scatter(
-                preds_df,
-                x="actual_rul",
-                y="predicted_rul",
-                hover_data=["engine_id", "error"],
-                labels={"actual_rul": "Ground Truth RUL (Cycles)", "predicted_rul": "Model Predicted RUL (Cycles)"},
-            )
-            # Add ideal 45-degree reference line
-            max_val = max(preds_df["actual_rul"].max(), preds_df["predicted_rul"].max()) + 10
-            fig_scatter.add_trace(
-                go.Scatter(
-                    x=[0, max_val],
-                    y=[0, max_val],
-                    mode="lines",
-                    name="Ideal Perfect Fit (y=x)",
-                    line=dict(color="#EF4444", dash="dash"),
-                )
-            )
-            fig_scatter.update_traces(marker=dict(size=7, color="#38BDF8", opacity=0.85))
-            apply_dark_theme(fig_scatter, height=340)
-            st.plotly_chart(fig_scatter, use_container_width=True)
-
-        with plot_col2:
-            st.markdown("#### Prediction Error Distribution (Residuals)")
-            fig_hist = px.histogram(
-                preds_df,
-                x="error",
-                nbins=25,
-                labels={"error": "Prediction Error (Predicted - Actual Cycles)"},
-            )
-            fig_hist.add_vline(x=0, line_dash="dash", line_color="#10B981", annotation_text="Zero Error")
-            fig_hist.update_traces(marker_color="#38BDF8")
-            apply_dark_theme(fig_hist, height=340)
-            fig_hist.update_layout(yaxis_title="Engine Count")
-            st.plotly_chart(fig_hist, use_container_width=True)
-
-    # Feature Importance
-    top_features = metrics_data.get("top_features", [])
-    if top_features:
-        st.markdown("#### Top Sensor Features Driving RUL Predictions")
-        feat_df = pd.DataFrame(top_features)
-        fig_feat = px.bar(
-            feat_df,
-            x="importance",
-            y="feature",
-            orientation="h",
-            labels={"importance": "Gini Feature Importance", "feature": "Sensor Feature"},
-        )
-        fig_feat.update_traces(marker_color="#38BDF8")
-        apply_dark_theme(fig_feat, height=320)
-        fig_feat.update_yaxes(autorange="reversed")
-        st.plotly_chart(fig_feat, use_container_width=True)
-
-    # Limitations & Academic Context
-    st.markdown("#### Dataset & Model Limitations")
-    st.markdown(
-        """
-        - **Synthetic Simulation Bias:** The C-MAPSS dataset was synthetically generated using a thermodynamic engine model, which may exhibit less noise than real-world flight operations.
-        - **Single Operating Condition (FD001):** FD001 tests sea-level conditions with a single failure mode (HPC degradation). Higher subsets (FD002/FD004) incorporate 6 flight conditions and multiple fault modes.
-        - **Piecewise Degradation Plateau:** Aircraft engines operate nominally for a prolonged initial period before observable physical degradation commences; advanced piece-wise clipping (e.g. at 125 cycles) can further refine early-life predictions.
-        - **Student Educational Scope:** This software is an engineering student demonstrator and is not certified for aviation airworthiness or FAA/EASA flight compliance.
-        """
+    subset_df = comparison_df.copy()
+    subset_df["CV RMSE (mean +/- std)"] = subset_df.apply(
+        lambda row: f"{row['cv_rmse_mean']:.2f} +/- {row['cv_rmse_std']:.2f}", axis=1
     )
+    subset_df = subset_df.rename(columns={
+        "model": "Model",
+        "test_rmse": "Test RMSE",
+        "test_mae": "Test MAE",
+        "test_nasa": "Test NASA Score",
+    })
+    st.dataframe(
+        subset_df[["Model", "CV RMSE (mean +/- std)", "Test RMSE", "Test MAE", "Test NASA Score"]],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    fig = px.bar(
+        subset_df,
+        x="Model",
+        y="Test RMSE",
+        color="Model",
+        labels={"Test RMSE": "Test RMSE (cycles)"},
+    )
+    apply_dark_theme(fig, height=340)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 if __name__ == "__main__":

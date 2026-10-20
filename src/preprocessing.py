@@ -8,6 +8,7 @@ from typing import List, Tuple, Optional
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.model_selection import GroupKFold
 
 try:
     from .data_loader import SENSOR_COLUMNS, SETTING_COLUMNS
@@ -67,6 +68,21 @@ def split_train_val_by_engine(
     val_df = df[df[unit_col].isin(val_engine_ids)].copy()
 
     return train_df, val_df, train_engine_ids, val_engine_ids
+
+
+def iter_group_kfold_engine_ids(engine_ids, n_splits: int = 5, random_state: int = 42):
+    """Yield seeded, disjoint engine ID folds using GroupKFold."""
+    unique_engines = np.asarray(sorted(set(engine_ids)))
+    if len(unique_engines) < n_splits:
+        raise ValueError(
+            f"GroupKFold with {n_splits} splits requires at least {n_splits} engines; "
+            f"got {len(unique_engines)}."
+        )
+
+    shuffled_group_labels = np.random.RandomState(random_state).permutation(len(unique_engines))
+    splitter = GroupKFold(n_splits=n_splits)
+    for train_idx, val_idx in splitter.split(unique_engines, groups=shuffled_group_labels):
+        yield unique_engines[train_idx].tolist(), unique_engines[val_idx].tolist()
 
 
 class CMapssPreprocessor(BaseEstimator, TransformerMixin):
@@ -160,3 +176,141 @@ def extract_test_last_cycles(test_df: pd.DataFrame) -> pd.DataFrame:
     unit_col = _get_unit_col(test_df)
     last_indices = test_df.groupby(unit_col)["cycle"].idxmax()
     return test_df.loc[last_indices].sort_values(unit_col).reset_index(drop=True)
+
+
+def pad_engine_sequence(engine_df: pd.DataFrame, window_length: int = 30) -> pd.DataFrame:
+    """
+    If engine sequence length is shorter than window_length, pad by repeating the first row
+    at the beginning until length equals window_length.
+    """
+    length = len(engine_df)
+    if length >= window_length:
+        return engine_df
+    pad_count = window_length - length
+    first_row = engine_df.iloc[[0]]
+    pad_df = pd.concat([first_row] * pad_count, ignore_index=True)
+    return pd.concat([pad_df, engine_df], ignore_index=True)
+
+
+def extract_windowed_sequences(
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    window_length: int = 30,
+    is_test_last: bool = False,
+    target_col: Optional[str] = "RUL",
+) -> Tuple[np.ndarray, Optional[np.ndarray], List[int]]:
+    """
+    Extracts sliding or last-observation windows of shape (N, window_length, len(feature_cols)).
+
+    If is_test_last is True:
+        For each engine, extracts exactly one window of length window_length ending at its last cycle.
+        If engine has fewer than window_length cycles, pads by repeating the first row.
+        Returns:
+            windows: np.ndarray of shape (num_engines, window_length, num_features)
+            targets: None or np.ndarray
+            engine_ids: list of engine IDs in order
+
+    If is_test_last is False (training/validation):
+        Slides a window of length window_length across each engine trajectory.
+        For each engine:
+            Pads if shorter than window_length.
+            Takes slices [t - window_length : t] for t in range(window_length, len(engine) + 1).
+        Returns:
+            windows: np.ndarray of shape (N, window_length, num_features)
+            targets: np.ndarray of shape (N,) with corresponding target values
+            engine_ids: list of engine IDs corresponding to each window
+    """
+    unit_col = _get_unit_col(df)
+    unique_units = sorted(df[unit_col].unique())
+
+    windows_list = []
+    targets_list = []
+    engine_ids = []
+
+    for unit_id in unique_units:
+        eng_df = df[df[unit_col] == unit_id].sort_values("cycle").reset_index(drop=True)
+        eng_df = pad_engine_sequence(eng_df, window_length=window_length)
+        eng_vals = eng_df[feature_cols].to_numpy(dtype=np.float32)
+        n_rows = len(eng_vals)
+
+        if is_test_last:
+            # Last window only
+            window = eng_vals[-window_length:]
+            windows_list.append(window)
+            engine_ids.append(unit_id)
+            if target_col and target_col in eng_df.columns:
+                targets_list.append(eng_df[target_col].iloc[-1])
+        else:
+            # Sliding windows
+            target_vals = eng_df[target_col].to_numpy(dtype=np.float32) if (target_col and target_col in eng_df.columns) else None
+            for t in range(window_length, n_rows + 1):
+                window = eng_vals[t - window_length : t]
+                windows_list.append(window)
+                engine_ids.append(unit_id)
+                if target_vals is not None:
+                    targets_list.append(target_vals[t - 1])
+
+    windows = np.array(windows_list, dtype=np.float32)
+    targets = np.array(targets_list, dtype=np.float32) if targets_list else None
+    return windows, targets, engine_ids
+
+
+def compute_tree_window_features(
+    windows: np.ndarray,
+    feature_names: List[str],
+    span: Optional[float] = None,
+) -> pd.DataFrame:
+    """
+    Transforms 3D windows of shape (N, W, F) into 2D tabular features for tree-based models:
+    For each sensor feature:
+    - {feature}_last: last value in the window
+    - {feature}_mean: arithmetic mean over the window
+    - {feature}_std: standard deviation over the window
+    - {feature}_slope: linear regression slope over the window
+    - {feature}_ewm: exponential weighted moving average over the window
+
+    Returns a DataFrame with N rows and 5 * F columns.
+    """
+    N, W, F = windows.shape
+    if F != len(feature_names):
+        raise ValueError(f"Feature count mismatch: windows has {F} features, but {len(feature_names)} names provided.")
+
+    span_val = float(span) if span is not None else float(W)
+    alpha = 2.0 / (span_val + 1.0)
+
+    # 1. Slope weights: denom = sum((tau - bar(tau))^2)
+    x_diff = np.arange(W, dtype=np.float64) - (W - 1) / 2.0
+    denom = np.sum(x_diff ** 2)
+
+    # 2. EWM weights: w_tau = (1 - alpha)^(W - 1 - tau), normalized
+    w = (1.0 - alpha) ** np.arange(W - 1, -1, -1, dtype=np.float64)
+    norm_w = w / np.sum(w)
+
+    # Vectorized computation across all N windows and F features
+    last_vals = windows[:, -1, :]                                    # (N, F)
+    mean_vals = np.mean(windows, axis=1)                              # (N, F)
+    std_vals = np.std(windows, axis=1)                                # (N, F)
+    slope_vals = np.einsum('w, nwf -> nf', x_diff, windows) / denom   # (N, F)
+    ewm_vals = np.einsum('w, nwf -> nf', norm_w, windows)           # (N, F)
+
+    # Construct DataFrame with clear column names
+    col_names = []
+    feature_arrays = []
+    for j, fname in enumerate(feature_names):
+        col_names.extend([
+            f"{fname}_last",
+            f"{fname}_mean",
+            f"{fname}_std",
+            f"{fname}_slope",
+            f"{fname}_ewm",
+        ])
+        feature_arrays.extend([
+            last_vals[:, j],
+            mean_vals[:, j],
+            std_vals[:, j],
+            slope_vals[:, j],
+            ewm_vals[:, j],
+        ])
+
+    df_tree = pd.DataFrame(np.column_stack(feature_arrays), columns=col_names)
+    return df_tree
