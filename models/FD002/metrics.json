@@ -1,0 +1,67 @@
+{
+  "status": "success",
+  "dataset_subset": "FD002",
+  "model_type": "RandomForestRegressor",
+  "parameters": {
+    "n_estimators": 100,
+    "max_depth": 15,
+    "min_samples_split": 5,
+    "min_samples_leaf": 2,
+    "random_state": 42,
+    "window_length": 30,
+    "rul_cap": 125.0,
+    "active_sensors": [
+      "sensor_1",
+      "sensor_2",
+      "sensor_3",
+      "sensor_4",
+      "sensor_5",
+      "sensor_6",
+      "sensor_7",
+      "sensor_8",
+      "sensor_9",
+      "sensor_10",
+      "sensor_11",
+      "sensor_12",
+      "sensor_13",
+      "sensor_14",
+      "sensor_15",
+      "sensor_16",
+      "sensor_17",
+      "sensor_18",
+      "sensor_19",
+      "sensor_20",
+      "sensor_21"
+    ]
+  },
+  "dependencies": {
+    "numpy": "2.5.1",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.9.0",
+    "lightgbm": "4.7.0",
+    "streamlit": "1.59.2"
+  },
+  "test_metrics": {
+    "rmse": 26.87,
+    "mae": 17.82,
+    "nasa_score": 7865.2
+  },
+  "test_metrics_by_model": {
+    "RandomForest": {
+      "rmse": 26.87,
+      "mae": 17.82,
+      "nasa_score": 7865.2
+    },
+    "LightGBM": {
+      "rmse": 26.49,
+      "mae": 17.41,
+      "nasa_score": 7965.9
+    }
+  },
+  "artifacts": {
+    "model": "randomforest_model.joblib",
+    "preprocessor": "regime_normalizer.joblib",
+    "test_predictions": "test_predictions.csv",
+    "lightgbm_model": "lightgbm_model.joblib"
+  }
+}

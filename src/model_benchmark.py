@@ -53,7 +53,7 @@ def load_config() -> Dict[str, Any]:
         with open(cfg_file, "r") as f:
             return yaml.safe_load(f)
     return {
-        "dataset": {"default_subset": "FD001", "data_dir": "data/raw"},
+        "dataset": {"subset": "FD001", "data_dir": "data/raw"},
         "preprocessing": {"window_length": 30, "variance_threshold": 1e-5},
         "training": {"rul_cap": 125},
     }
@@ -169,7 +169,7 @@ def split_engines_for_early_stopping(engine_ids, seed: int, validation_ratio: fl
 
 def run_benchmark():
     config = load_config()
-    subset = config.get("dataset", {}).get("default_subset", "FD001")
+    subset = config.get("dataset", {}).get("subset", "FD001")
     window_length = int(config.get("preprocessing", {}).get("window_length", 30))
     variance_threshold = float(config.get("preprocessing", {}).get("variance_threshold", 1e-5))
     rul_cap = float(config.get("training", {}).get("rul_cap", 125))
@@ -443,6 +443,6 @@ if __name__ == "__main__":
     selected = (
         ["FD001", "FD002", "FD003", "FD004"]
         if arguments.all
-        else [arguments.subset or config.get("dataset", {}).get("default_subset", "FD001")]
+        else [arguments.subset or config.get("dataset", {}).get("subset", "FD001")]
     )
     run_benchmarks(selected)

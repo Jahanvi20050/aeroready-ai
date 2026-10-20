@@ -1,9 +1,12 @@
 """Leakage-safe RandomForest and LightGBM benchmarks for FD001-FD004."""
 import json
 import time
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import joblib
 import numpy as np
@@ -24,6 +27,47 @@ from src.regimes import RegimeNormalizer
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _write_readme_results(result_frame: pd.DataFrame) -> None:
+    readme_path = PROJECT_ROOT / "README.md"
+    readme_text = readme_path.read_text(encoding="utf-8")
+    start_marker = "<!-- BENCHMARK_TABLE_START -->"
+    end_marker = "<!-- BENCHMARK_TABLE_END -->"
+    if start_marker not in readme_text or end_marker not in readme_text:
+        raise ValueError("README benchmark table markers are missing.")
+    rows = [
+        f"| {row.subset} | {row.model} | {row.test_rmse:.2f} | "
+        f"{row.test_mae:.2f} | {row.test_nasa:.1f} |"
+        for row in result_frame.itertuples(index=False)
+    ]
+    table = "\n".join([start_marker, *rows, end_marker])
+    before, remainder = readme_text.split(start_marker, maxsplit=1)
+    _, after = remainder.split(end_marker, maxsplit=1)
+    readme_path.write_text(before + table + after, encoding="utf-8")
+
+
+def _write_benchmark_chart(result_frame: pd.DataFrame, results_dir: Path) -> None:
+    subsets_in_table = list(dict.fromkeys(result_frame["subset"].tolist()))
+    model_names = list(dict.fromkeys(result_frame["model"].tolist()))
+    positions = np.arange(len(subsets_in_table))
+    width = 0.8 / max(1, len(model_names))
+    figure, axis = plt.subplots(figsize=(9, 5))
+    for index, model_name in enumerate(model_names):
+        model_rows = result_frame[result_frame["model"] == model_name].set_index("subset")
+        values = [
+            model_rows.loc[subset, "test_rmse"] if subset in model_rows.index else np.nan
+            for subset in subsets_in_table
+        ]
+        axis.bar(positions + index * width, values, width, label=model_name)
+    axis.set_xticks(positions + width * (len(model_names) - 1) / 2, subsets_in_table)
+    axis.set_ylabel("Test RMSE (cycles)")
+    axis.set_xlabel("C-MAPSS subset")
+    axis.set_title("Test RMSE by subset and model")
+    axis.legend()
+    figure.tight_layout()
+    figure.savefig(results_dir / "benchmark_all.png", dpi=160)
+    plt.close(figure)
 
 
 def load_config() -> Dict[str, Any]:
@@ -63,13 +107,13 @@ def run_subset(subset: str, config: Dict[str, Any]) -> Tuple[List[Dict[str, Any]
             fold_train = train_labeled[train_labeled["unit"].isin(train_ids)].copy()
             fold_validation = train_labeled[train_labeled["unit"].isin(validation_ids)].copy()
 
-            normalizer = RegimeNormalizer(n_clusters=n_clusters, random_state=seed)
-            fold_train = normalizer.fit_transform(fold_train)
-            fold_validation = normalizer.transform(fold_validation)
             sensors = [
                 column for column in SENSOR_COLUMNS
                 if fold_train[column].std() > variance_threshold
             ]
+            normalizer = RegimeNormalizer(n_clusters=n_clusters, random_state=seed)
+            fold_train = normalizer.fit_transform(fold_train)
+            fold_validation = normalizer.transform(fold_validation)
             x_train, y_train, _ = extract_windowed_sequences(
                 fold_train, sensors, window_length=window_length,
                 is_test_last=False, target_col="RUL",
@@ -102,13 +146,13 @@ def run_subset(subset: str, config: Dict[str, Any]) -> Tuple[List[Dict[str, Any]
     print(f"\n  CV completed in {time.perf_counter() - started:.1f}s")
 
     final_normalizer = RegimeNormalizer(n_clusters=n_clusters, random_state=seeds[0])
-    normalized_train = final_normalizer.fit_transform(train_labeled)
-    normalized_test = final_normalizer.transform(test_df)
     active_sensors = [
         column for column in SENSOR_COLUMNS
-        if normalized_train[column].std() > variance_threshold
+        if train_labeled[column].std() > variance_threshold
     ]
     dropped_sensors = [column for column in SENSOR_COLUMNS if column not in active_sensors]
+    normalized_train = final_normalizer.fit_transform(train_labeled)
+    normalized_test = final_normalizer.transform(test_df)
     print(f"  Dropped sensors: {dropped_sensors}")
 
     x_train_seq, y_train, _ = extract_windowed_sequences(
@@ -142,19 +186,25 @@ def run_subset(subset: str, config: Dict[str, Any]) -> Tuple[List[Dict[str, Any]
     )
     rows = []
     fitted_models = {}
+    test_metrics_by_model = {}
     for name, model in models:
         model.fit(x_train, y_train)
-        test_predictions = model.predict(x_test)
+        test_predictions = np.maximum(0.0, model.predict(x_test))
         test_metrics = compute_all_metrics(y_test, test_predictions)
+        test_metrics_by_model[name] = {
+            "rmse": round(float(test_metrics["rmse"]), 2),
+            "mae": round(float(test_metrics["mae"]), 2),
+            "nasa_score": round(float(test_metrics["nasa_score"]), 1),
+        }
         fold_rmse = [record["rmse"] for record in cv_metrics[name]]
         rows.append({
             "subset": subset,
             "model": name,
             "cv_rmse_mean": round(float(np.mean(fold_rmse)), 2),
             "cv_rmse_std": round(float(np.std(fold_rmse)), 2),
-            "test_rmse": round(float(test_metrics["rmse"]), 2),
-            "test_mae": round(float(test_metrics["mae"]), 2),
-            "test_nasa": round(float(test_metrics["nasa_score"]), 1),
+            "test_rmse": test_metrics_by_model[name]["rmse"],
+            "test_mae": test_metrics_by_model[name]["mae"],
+            "test_nasa": test_metrics_by_model[name]["nasa_score"],
         })
         fitted_models[name] = (model, test_metrics, test_predictions)
 
@@ -177,7 +227,7 @@ def run_subset(subset: str, config: Dict[str, Any]) -> Tuple[List[Dict[str, Any]
     for name, (model, _, _) in fitted_models.items():
         joblib.dump(model, model_dir / f"{name.lower()}_model.joblib")
 
-    _, rf_metrics, rf_predictions = fitted_models["RandomForest"]
+    _, _, rf_predictions = fitted_models["RandomForest"]
     pd.DataFrame({
         "engine_id": test_engine_ids,
         "actual_rul": y_test,
@@ -199,9 +249,18 @@ def run_subset(subset: str, config: Dict[str, Any]) -> Tuple[List[Dict[str, Any]
                 "rul_cap": rul_cap,
                 "active_sensors": active_sensors,
             },
-            "test_metrics": rf_metrics,
+            "dependencies": {
+                "numpy": version("numpy"),
+                "pandas": version("pandas"),
+                "scikit-learn": version("scikit-learn"),
+                "lightgbm": version("lightgbm"),
+                "streamlit": version("streamlit"),
+            },
+            "test_metrics": test_metrics_by_model["RandomForest"],
+            "test_metrics_by_model": test_metrics_by_model,
             "artifacts": {
                 "model": "randomforest_model.joblib",
+                "lightgbm_model": "lightgbm_model.joblib",
                 "preprocessor": "regime_normalizer.joblib",
                 "test_predictions": "test_predictions.csv",
             },
@@ -216,8 +275,13 @@ def run_benchmarks(subsets: List[str]) -> pd.DataFrame:
     results_dir.mkdir(parents=True, exist_ok=True)
     csv_path = results_dir / "benchmark_all.csv"
     info_path = results_dir / "regime_info.json"
+    requested_subsets = set(subsets)
     previous_results = pd.read_csv(csv_path) if csv_path.is_file() else pd.DataFrame()
     all_info = json.loads(info_path.read_text(encoding="utf-8")) if info_path.is_file() else {}
+    all_info = {
+        subset: info for subset, info in all_info.items()
+        if subset not in requested_subsets
+    }
     rows: List[Dict[str, Any]] = []
     elapsed = time.perf_counter()
 
@@ -233,6 +297,27 @@ def run_benchmarks(subsets: List[str]) -> pd.DataFrame:
             results_dir / f"model_comparison_{subset.lower()}.csv", index=False
         )
 
+        retained_results = previous_results[
+            ~previous_results["subset"].isin(requested_subsets)
+        ] if not previous_results.empty else pd.DataFrame()
+        result_frame = pd.concat(
+            [retained_results, pd.DataFrame(rows)],
+            ignore_index=True,
+        ).sort_values(["subset", "model"]).reset_index(drop=True)
+        result_frame = result_frame[[
+            "subset", "model", "cv_rmse_mean", "cv_rmse_std",
+            "test_rmse", "test_mae", "test_nasa",
+        ]]
+        result_frame.to_csv(csv_path, index=False)
+        for completed_subset in {rows_item["subset"] for rows_item in rows}:
+            result_frame[result_frame["subset"] == completed_subset].to_csv(
+                results_dir / f"model_comparison_{completed_subset.lower()}.csv",
+                index=False,
+            )
+        info_path.write_text(json.dumps(all_info, indent=2) + "\n", encoding="utf-8")
+        _write_readme_results(result_frame)
+        _write_benchmark_chart(result_frame, results_dir)
+
         for row in subset_rows:
             if row["test_rmse"] < 8:
                 raise RuntimeError(
@@ -244,6 +329,13 @@ def run_benchmarks(subsets: List[str]) -> pd.DataFrame:
                     item for item in rows
                     if item["subset"] == "FD001" and item["model"] == row["model"]
                 ), None)
+                if baseline is None and not previous_results.empty:
+                    baseline_row = previous_results[
+                        (previous_results["subset"] == "FD001")
+                        & (previous_results["model"] == row["model"])
+                    ]
+                    if not baseline_row.empty:
+                        baseline = baseline_row.iloc[0].to_dict()
                 if row["test_rmse"] > 35:
                     print(
                         f"  DIAGNOSTIC: {subset}/{row['model']} RMSE is above 35; "
@@ -256,11 +348,6 @@ def run_benchmarks(subsets: List[str]) -> pd.DataFrame:
                             f"{subset} has empty/missing regime clusters; stop to diagnose "
                             f"before benchmarking further subsets: {subset_info['cluster_sizes']}"
                         )
-                if baseline and row["test_rmse"] < 0.8 * baseline["test_rmse"]:
-                    raise RuntimeError(
-                        f"Suspicious {subset}/{row['model']} is over 20% better than FD001. "
-                        "Stopped; diagnose leakage before continuing."
-                    )
                 if baseline and row["test_rmse"] < baseline["test_rmse"]:
                     raise RuntimeError(
                         f"Suspicious {subset}/{row['model']} test RMSE "
@@ -268,44 +355,17 @@ def run_benchmarks(subsets: List[str]) -> pd.DataFrame:
                         f"({baseline['test_rmse']:.2f}). Stop and diagnose leakage."
                     )
 
-    if not previous_results.empty:
-        previous_results = previous_results[~previous_results["subset"].isin(subsets)]
-        rows = previous_results.to_dict(orient="records") + rows
-    result_frame = pd.DataFrame(rows).sort_values(["subset", "model"]).reset_index(drop=True)
-    result_frame = result_frame[[
-        "subset", "model", "cv_rmse_mean", "cv_rmse_std",
-        "test_rmse", "test_mae", "test_nasa",
-    ]]
+    result_frame = pd.read_csv(csv_path).sort_values(
+        ["subset", "model"]
+    ).reset_index(drop=True)
     result_frame.to_csv(csv_path, index=False)
-    for subset in subsets:
-        result_frame[result_frame["subset"] == subset].to_csv(
-            results_dir / f"model_comparison_{subset.lower()}.csv", index=False
-        )
-    info_path.write_text(json.dumps(all_info, indent=2) + "\n", encoding="utf-8")
-
-    subsets_in_table = list(dict.fromkeys(result_frame["subset"].tolist()))
-    model_names = list(dict.fromkeys(result_frame["model"].tolist()))
-    positions = np.arange(len(subsets_in_table))
-    width = 0.8 / max(1, len(model_names))
-    figure, axis = plt.subplots(figsize=(9, 5))
-    for index, model_name in enumerate(model_names):
-        model_rows = result_frame[result_frame["model"] == model_name].set_index("subset")
-        values = [
-            model_rows.loc[subset, "test_rmse"] if subset in model_rows.index else np.nan
-            for subset in subsets_in_table
-        ]
-        axis.bar(positions + index * width, values, width, label=model_name)
-    axis.set_xticks(positions + width * (len(model_names) - 1) / 2, subsets_in_table)
-    axis.set_ylabel("Test RMSE (cycles)")
-    axis.set_xlabel("C-MAPSS subset")
-    axis.set_title("Test RMSE by subset and model")
-    axis.legend()
-    figure.tight_layout()
-    figure.savefig(results_dir / "benchmark_all.png", dpi=160)
-    plt.close(figure)
 
     print("\nRF + LightGBM results (GRU skipped to keep the four-subset run bounded):")
     print(result_frame.to_string(index=False))
     print(f"Total runtime: {time.perf_counter() - elapsed:.1f}s")
     print(f"Saved {csv_path}, {info_path}, and {results_dir / 'benchmark_all.png'}")
     return result_frame
+
+
+if __name__ == "__main__":
+    run_benchmarks(["FD001", "FD002", "FD003", "FD004"])

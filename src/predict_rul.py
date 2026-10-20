@@ -32,19 +32,20 @@ def _load_config() -> Dict[str, Any]:
 def get_default_subset() -> str:
     """Return the dashboard default subset configured for this project."""
     config = _load_config()
-    subset = config.get("dataset", {}).get("default_subset")
+    subset = config.get("dataset", {}).get("subset")
     if not subset:
-        raise ValueError("Set dataset.default_subset in config.yaml.")
+        raise ValueError("Set dataset.subset in config.yaml.")
     return str(subset)
 
 
 def get_available_subsets() -> List[str]:
-    """Return subsets with model, preprocessor, metrics, and comparison artifacts."""
+    """Return subsets with both models and complete comparison artifacts."""
     models_dir = _project_root / "models"
     results_dir = _project_root / "results"
     benchmark_file = results_dir / "benchmark_all.csv"
     if not benchmark_file.is_file():
         return []
+    benchmark_df = pd.read_csv(benchmark_file, usecols=["subset", "model"])
     available = []
     if not models_dir.is_dir():
         return available
@@ -52,11 +53,15 @@ def get_available_subsets() -> List[str]:
         subset = model_dir.name
         required_files = (
             model_dir / "randomforest_model.joblib",
+            model_dir / "lightgbm_model.joblib",
             model_dir / "regime_normalizer.joblib",
             model_dir / "metrics.json",
-            benchmark_file,
         )
-        if all(path.is_file() for path in required_files):
+        subset_models = set(benchmark_df.loc[benchmark_df["subset"] == subset, "model"])
+        if (
+            all(path.is_file() for path in required_files)
+            and {"RandomForest", "LightGBM"}.issubset(subset_models)
+        ):
             available.append(subset)
     return available
 

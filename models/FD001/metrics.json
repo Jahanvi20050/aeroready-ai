@@ -28,14 +28,34 @@
       "sensor_21"
     ]
   },
+  "dependencies": {
+    "numpy": "2.5.1",
+    "pandas": "2.3.3",
+    "scikit-learn": "1.9.0",
+    "lightgbm": "4.7.0",
+    "streamlit": "1.59.2"
+  },
   "test_metrics": {
-    "rmse": 13.0319,
-    "mae": 9.6348,
-    "nasa_score": 237.5709
+    "rmse": 12.78,
+    "mae": 9.44,
+    "nasa_score": 225.7
+  },
+  "test_metrics_by_model": {
+    "RandomForest": {
+      "rmse": 12.78,
+      "mae": 9.44,
+      "nasa_score": 225.7
+    },
+    "LightGBM": {
+      "rmse": 13.0,
+      "mae": 9.76,
+      "nasa_score": 236.3
+    }
   },
   "artifacts": {
     "model": "randomforest_model.joblib",
     "preprocessor": "regime_normalizer.joblib",
-    "test_predictions": "test_predictions.csv"
+    "test_predictions": "test_predictions.csv",
+    "lightgbm_model": "lightgbm_model.joblib"
   }
 }

@@ -1,6 +1,6 @@
 # AeroReady AI Configuration File
 dataset:
-  default_subset: "FD003"
+  subset: "FD003"
   data_dir: "data/raw"
 
 preprocessing:
@@ -27,3 +27,9 @@ training:
   random_state: 42
   rul_cap: 125   # Piecewise RUL cap applied to training labels only
   seeds: [42, 123, 999]
+
+uncertainty:
+  calibration_fraction: 0.2
+  split_seed: 2026
+  cut_seed: 2027
+  minimum_observed_cycles: 30

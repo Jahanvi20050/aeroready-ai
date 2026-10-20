@@ -225,6 +225,14 @@ def load_test_predictions_table(subset: str):
 
 
 @st.cache_data
+def load_uncertainty_predictions_table(subset: str):
+    predictions_file = _current_dir / "results" / f"predictions_{subset}.csv"
+    if predictions_file.is_file():
+        return pd.read_csv(predictions_file)
+    return None
+
+
+@st.cache_data
 def get_raw_dataset_samples(subset: str):
     return load_raw_data(subset=subset)
 
@@ -494,6 +502,44 @@ def render_engine_health(simulator: FleetSimulator, predictor: RULPredictor):
 
     selected_ac = aircraft_options[selected_id]
     eng_id = selected_ac["assigned_engine_id"]
+    uncertainty_df = load_uncertainty_predictions_table(simulator.subset)
+    if uncertainty_df is None:
+        st.error(
+            f"RUL uncertainty predictions for {simulator.subset} are missing. "
+            "Run `python -m src.uncertainty` to generate them."
+        )
+    else:
+        engine_intervals = uncertainty_df[uncertainty_df["unit"] == eng_id]
+        if engine_intervals.empty:
+            st.error(
+                f"No uncertainty intervals were found for {simulator.subset} engine {eng_id}."
+            )
+        else:
+            st.markdown("#### 80% RUL Prediction Intervals")
+            interval_columns = st.columns(len(engine_intervals))
+            for column, interval in zip(
+                interval_columns, engine_intervals.itertuples(index=False)
+            ):
+                risk, risk_color, _ = categorize_rul(float(interval.rul_lower))
+                with column:
+                    st.metric(
+                        f"{interval.method} median RUL",
+                        f"{interval.rul_median:.1f} cycles",
+                        delta=(
+                            f"{interval.rul_lower:.1f}–{interval.rul_upper:.1f} cycle "
+                            "interval"
+                        ),
+                    )
+                    st.caption(
+                        f"Lower: {interval.rul_lower:.1f} | "
+                        f"Median: {interval.rul_median:.1f} | "
+                        f"Upper: {interval.rul_upper:.1f} cycles"
+                    )
+                    st.markdown(
+                        f"Interval-based risk: "
+                        f"<span style='color:{risk_color};font-weight:700'>{risk}</span>",
+                        unsafe_allow_html=True,
+                    )
 
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:

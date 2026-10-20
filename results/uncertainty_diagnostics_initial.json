@@ -1,0 +1,70 @@
+{
+  "FD001": {
+    "subset": "FD001",
+    "nominal_coverage": 0.8,
+    "quantile_regression": {
+      "before_calibration_coverage": 0.7,
+      "after_calibration_coverage": 0.95,
+      "calibration_adjustment": 11.307520392750845
+    },
+    "split_conformal_random_forest": {
+      "before_finite_sample_correction_coverage": 0.88,
+      "after_finite_sample_correction_coverage": 0.88,
+      "naive_radius": 23.14366213307676,
+      "finite_sample_radius": 23.14366213307676
+    },
+    "calibration_engine_count": 20,
+    "fitting_engine_count": 80
+  },
+  "FD002": {
+    "subset": "FD002",
+    "nominal_coverage": 0.8,
+    "quantile_regression": {
+      "before_calibration_coverage": 0.6525096525096525,
+      "after_calibration_coverage": 0.9459459459459459,
+      "calibration_adjustment": 49.959805465078816
+    },
+    "split_conformal_random_forest": {
+      "before_finite_sample_correction_coverage": 0.8687258687258688,
+      "after_finite_sample_correction_coverage": 0.9305019305019305,
+      "naive_radius": 41.199195367754655,
+      "finite_sample_radius": 58.83231544219612
+    },
+    "calibration_engine_count": 52,
+    "fitting_engine_count": 208
+  },
+  "FD003": {
+    "subset": "FD003",
+    "nominal_coverage": 0.8,
+    "quantile_regression": {
+      "before_calibration_coverage": 0.6,
+      "after_calibration_coverage": 1.0,
+      "calibration_adjustment": 79.76129737315325
+    },
+    "split_conformal_random_forest": {
+      "before_finite_sample_correction_coverage": 1.0,
+      "after_finite_sample_correction_coverage": 1.0,
+      "naive_radius": 80.35539832146782,
+      "finite_sample_radius": 80.35539832146782
+    },
+    "calibration_engine_count": 20,
+    "fitting_engine_count": 80
+  },
+  "FD004": {
+    "subset": "FD004",
+    "nominal_coverage": 0.8,
+    "quantile_regression": {
+      "before_calibration_coverage": 0.5524193548387096,
+      "after_calibration_coverage": 0.8709677419354839,
+      "calibration_adjustment": 33.0
+    },
+    "split_conformal_random_forest": {
+      "before_finite_sample_correction_coverage": 0.8508064516129032,
+      "after_finite_sample_correction_coverage": 0.8508064516129032,
+      "naive_radius": 39.955483564692926,
+      "finite_sample_radius": 39.955483564692926
+    },
+    "calibration_engine_count": 50,
+    "fitting_engine_count": 199
+  }
+}

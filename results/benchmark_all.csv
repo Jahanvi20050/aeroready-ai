@@ -1,5 +1,9 @@
 subset,model,cv_rmse_mean,cv_rmse_std,test_rmse,test_mae,test_nasa
 FD001,LightGBM,13.14,0.6,13.0,9.76,236.3
-FD001,RandomForest,13.67,0.63,13.03,9.63,237.6
+FD001,RandomForest,13.67,0.63,12.78,9.44,225.7
+FD002,LightGBM,15.51,0.57,26.49,17.41,7965.9
+FD002,RandomForest,16.14,0.63,26.87,17.82,7865.2
 FD003,LightGBM,11.83,1.38,14.08,10.52,297.9
-FD003,RandomForest,12.69,1.56,14.19,10.37,293.2
+FD003,RandomForest,12.7,1.55,14.17,10.32,294.7
+FD004,LightGBM,14.64,1.17,27.1,19.11,5176.0
+FD004,RandomForest,15.19,1.03,27.36,19.5,5222.4

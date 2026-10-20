@@ -14,13 +14,13 @@ from src.benchmark_subsets import load_config, run_benchmarks
 def train_pipeline(subset: Optional[str] = None):
     """Run the configured RandomForest and LightGBM pipeline for a subset."""
     config = load_config()
-    selected_subset = subset or config.get("dataset", {}).get("default_subset", "FD001")
+    selected_subset = subset or config.get("dataset", {}).get("subset", "FD001")
     return run_benchmarks([selected_subset])
 
 
 def main():
     config = load_config()
-    default_subset = config.get("dataset", {}).get("default_subset", "FD001")
+    default_subset = config.get("dataset", {}).get("subset", "FD001")
     parser = argparse.ArgumentParser(description="Train AeroReady AI C-MAPSS RUL models.")
     parser.add_argument(
         "--subset",

@@ -41,7 +41,7 @@ def load_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
     if not cfg_file.is_file():
         # Fallback default configuration
         return {
-            "dataset": {"default_subset": "FD001", "data_dir": "data/raw"},
+            "dataset": {"subset": "FD001", "data_dir": "data/raw"},
             "preprocessing": {"rolling_window": 5, "variance_threshold": 1e-5},
             "model": {
                 "type": "RandomForestRegressor",
@@ -62,7 +62,7 @@ def run_experiment(rul_cap: Optional[float], config: Dict[str, Any]) -> Dict[str
     """
     Trains RandomForestRegressor and evaluates against official NASA test set.
     """
-    subset = config.get("dataset", {}).get("default_subset", "FD001")
+    subset = config.get("dataset", {}).get("subset", "FD001")
     raw_dir = _project_root / config.get("dataset", {}).get("data_dir", "data/raw")
     if not raw_dir.exists():
         raw_dir = get_default_data_dir()
